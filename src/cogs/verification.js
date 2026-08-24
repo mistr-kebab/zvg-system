@@ -253,7 +253,6 @@ async function handleStart(interaction) {
 
   const input = new TextInputBuilder()
     .setCustomId('robloxUsername')
-    .setLabel('Roblox Username')
     .setPlaceholder('Your exact Roblox username')
     .setStyle(TextInputStyle.Short)
     .setMinLength(3)
