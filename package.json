@@ -1,13 +1,27 @@
 {
   "name": "zvg-system",
   "version": "1.0.0",
-  "description": "Discord bot for ZVG Studio (Roblox)",
+  "description": "Discord bot for Zero Visit Games (Roblox studio): welcome messages, server rules and Roblox account verification",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "discord",
+    "discord-bot",
+    "roblox",
+    "verification",
+    "discord.js"
+  ],
+  "author": "Zero Visit Games <antonio@disc-tools.de> (https://github.com/mistr-kebab)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mistr-kebab/zvg-system.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mistr-kebab/zvg-system/issues"
+  },
+  "homepage": "https://github.com/mistr-kebab/zvg-system#readme",
   "type": "commonjs"
 }
