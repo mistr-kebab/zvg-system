@@ -13,6 +13,7 @@ const {
   SeparatorBuilder,
   TextInputBuilder,
   TextInputStyle,
+  TextDisplayBuilder,
   ThumbnailBuilder,
 } = require('discord.js');
 const crypto = require('node:crypto');
