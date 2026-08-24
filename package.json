@@ -1,0 +1,13 @@
+{
+  "name": "zvg-system",
+  "version": "1.0.0",
+  "description": "Discord bot for ZVG Studio (Roblox)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
