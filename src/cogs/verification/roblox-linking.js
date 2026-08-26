@@ -7,6 +7,8 @@ const {
   Events,
   LabelBuilder,
   MessageFlags,
+  MediaGalleryBuilder,
+  MediaGalleryItemBuilder,
   ModalBuilder,
   PermissionFlagsBits,
   SectionBuilder,
@@ -16,76 +18,34 @@ const {
   TextDisplayBuilder,
   ThumbnailBuilder,
 } = require('discord.js');
-const crypto = require('node:crypto');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const DEFAULT_CHANNEL_ID = '1541311852150263828';
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DATA_FILE = path.join(DATA_DIR, 'verification.json');
+const DEFAULT_LOG_CHANNEL_ID = '1541345572965851176';
+const PANEL_IMAGE_PATH = path.join(process.cwd(), 'assets', 'roblox-linking.png');
 
-const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const SESSION_TTL_MS = 15 * 60 * 1000;
-
-const sessions = new Map();
-
-function loadData() {
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-  } catch {
-    return {};
-  }
-}
-
-function saveData(data) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = `${DATA_FILE}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-  fs.renameSync(tmp, DATA_FILE);
-}
-
-function getLink(discordId) {
-  return loadData().links?.[discordId] ?? null;
-}
-
-function generateCode() {
-  const bytes = crypto.randomBytes(6);
-  let code = '';
-  for (let i = 0; i < 6; i++) code += CODE_CHARS[bytes[i] % CODE_CHARS.length];
-  return `ZVG-${code}`;
-}
-
-async function getRobloxUserByUsername(username) {
-  try {
-    const res = await fetch('https://users.roblox.com/v1/usernames/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ usernames: [username] }),
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    return json.data?.[0] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-async function getRobloxProfile(userId) {
-  try {
-    const res = await fetch(`https://users.roblox.com/v1/users/${userId}`);
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
-}
-
-function profileUrl(userId) {
-  return `https://www.roblox.com/users/${userId}/profile`;
-}
+const {
+  loadData,
+  saveData,
+  getLink,
+  findLinkByRobloxId,
+  generateCode,
+  getRobloxUserByUsername,
+  getRobloxProfile,
+  profileUrl,
+  sessions,
+  SESSION_TTL_MS,
+} = require('../../utils/verificationStore');
 
 function buildPanelPayload() {
-  const section = new SectionBuilder()
+  const linkedCount = Object.keys(loadData().links ?? {}).length;
+  const container = new ContainerBuilder()
+    .setAccentColor(0x00a2ff)
+    .addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(
+        new MediaGalleryItemBuilder().setURL('attachment://roblox-linking.png'),
+      ),
+    )
     .addTextDisplayComponents(
       new TextDisplayBuilder().setContent('## Roblox Verification'),
       new TextDisplayBuilder().setContent(
@@ -93,7 +53,7 @@ function buildPanelPayload() {
           'Link your Roblox account to this Discord server.',
           '',
           '**How it works:**',
-          '- Press **Verify with Roblox** below',
+          '- Press **Link with Roblox** below',
           '- Enter your exact Roblox username',
           '- Put the generated code in your Roblox profile **About** section',
           '- Click **Check now**',
@@ -102,27 +62,25 @@ function buildPanelPayload() {
         ].join('\n'),
       ),
     )
-    .setThumbnailAccessory(
-      new ThumbnailBuilder().setURL(
-        'https://upload.wikimedia.org/wikipedia/commons/thumb/7/7e/Roblox_Logo_2022.svg/512px-Roblox_Logo_2022.svg.png',
-      ),
-    );
-
-  const container = new ContainerBuilder()
-    .setAccentColor(0x00a2ff)
-    .addSectionComponents(section)
     .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`-# 🔗 **${linkedCount}** account${linkedCount === 1 ? '' : 's'} linked`),
+    )
     .addActionRowComponents(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('zvg:verify:start')
-          .setLabel('Verify with Roblox')
+          .setLabel('Link with Roblox')
           .setEmoji('🔗')
           .setStyle(ButtonStyle.Primary),
       ),
     );
 
-  return { flags: MessageFlags.IsComponentsV2, components: [container] };
+  return {
+    flags: MessageFlags.IsComponentsV2,
+    components: [container],
+    files: [PANEL_IMAGE_PATH],
+  };
 }
 
 function buildCodePayload(session) {
@@ -199,12 +157,22 @@ function buildSuccessPayload(link, nicknameNote) {
 }
 
 function buildAlreadyVerifiedPayload(link) {
+  const verifiedAt = link.verifiedAt ? Math.floor(new Date(link.verifiedAt).getTime() / 1000) : null;
+  const verifiedLine = verifiedAt
+    ? `Linked <t:${verifiedAt}:F> (<t:${verifiedAt}:R>)`
+    : 'Verification date unknown';
+
   const container = new ContainerBuilder()
     .setAccentColor(0x57f287)
     .addTextDisplayComponents(
       new TextDisplayBuilder().setContent('## Already verified'),
       new TextDisplayBuilder().setContent(
-        `You are already linked to [**${link.robloxUsername}**](${profileUrl(link.robloxUserId)}).\nOpen a ticket if you want to relink.`,
+        [
+          `You are already linked to [**${link.robloxUsername}**](${profileUrl(link.robloxUserId)}) (\`${link.robloxUserId}\`).`,
+          verifiedLine,
+          '',
+          'Open a ticket if you want to relink.',
+        ].join('\n'),
       ),
     );
 
@@ -235,12 +203,81 @@ function buildUserNotFoundPayload(username) {
   return { flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral, components: [container] };
 }
 
+function buildRobloxTakenPayload(username) {
+  const container = new ContainerBuilder()
+    .setAccentColor(0xed4245)
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent('## Roblox account already linked'),
+      new TextDisplayBuilder().setContent(
+        [
+          `**${username}** is already linked to another Discord account.`,
+          '',
+          'One Roblox account can only be connected to one Discord account.',
+          'Open a ticket if you believe this is a mistake.',
+        ].join('\n'),
+      ),
+    );
+
+  return { flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral, components: [container] };
+}
+
 async function applyNickname(member, robloxUsername) {
   try {
     await member.setNickname(robloxUsername);
     return 'Your nickname has been updated.';
-  } catch {
+  } catch (error) {
+    console.error(`[RobloxLinking] Failed to set nickname for ${member.id} (${member.user?.username}):`, error);
     return 'I could not update your nickname (missing permissions or role hierarchy). Please contact staff.';
+  }
+}
+
+function buildLinkLogPayload(member, link) {
+  const verifiedAt = Math.floor(new Date(link.verifiedAt).getTime() / 1000);
+
+  const container = new ContainerBuilder()
+    .setAccentColor(0x00a2ff)
+    .addSectionComponents(
+      new SectionBuilder()
+        .addTextDisplayComponents(
+          new TextDisplayBuilder().setContent('## Account Linked'),
+          new TextDisplayBuilder().setContent(
+            [
+              `${member} (\`${member.id}\`) linked their Roblox account:`,
+              `[**${link.robloxUsername}**](${profileUrl(link.robloxUserId)}) (\`${link.robloxUserId}\`)`,
+            ].join('\n'),
+          ),
+        )
+        .setThumbnailAccessory(
+          new ThumbnailBuilder().setURL(member.user.displayAvatarURL({ extension: 'png', size: 256 })),
+        ),
+    )
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`-# Verified <t:${verifiedAt}:R>`),
+    );
+
+  return { flags: MessageFlags.IsComponentsV2, components: [container] };
+}
+
+async function sendLinkLog(client, member, link) {
+  const channelId = process.env.VERIFICATION_LOG_CHANNEL_ID || DEFAULT_LOG_CHANNEL_ID;
+
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      console.warn(`[RobloxLinking] Log channel ${channelId} not found.`);
+      return;
+    }
+
+    const permissions = channel.permissionsFor(client.user);
+    if (!permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
+      console.warn(`[RobloxLinking] Missing permissions in log channel #${channel.name}.`);
+      return;
+    }
+
+    await channel.send(buildLinkLogPayload(member, link));
+  } catch (error) {
+    console.error('[RobloxLinking] Failed to send link log:', error);
   }
 }
 
@@ -273,13 +310,19 @@ async function handleStart(interaction) {
 }
 
 async function handleSubmit(interaction) {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2 });
 
   const username = interaction.fields.getTextInputValue('robloxUsername').trim();
   const user = await getRobloxUserByUsername(username);
 
   if (!user) {
     await interaction.editReply(buildUserNotFoundPayload(username));
+    return;
+  }
+
+  if (findLinkByRobloxId(user.id)) {
+    await interaction.editReply(buildRobloxTakenPayload(user.name));
+    sessions.delete(interaction.user.id);
     return;
   }
 
@@ -312,6 +355,13 @@ async function handleCheck(interaction) {
     return;
   }
 
+  const clash = findLinkByRobloxId(session.robloxUserId, interaction.user.id);
+  if (clash) {
+    sessions.delete(interaction.user.id);
+    await interaction.editReply(buildRobloxTakenPayload(session.robloxUsername));
+    return;
+  }
+
   const data = loadData();
   data.links ??= {};
   data.links[interaction.user.id] = {
@@ -324,6 +374,25 @@ async function handleCheck(interaction) {
 
   const nicknameNote = await applyNickname(interaction.member, session.robloxUsername);
   await interaction.editReply(buildSuccessPayload(data.links[interaction.user.id], nicknameNote));
+
+  await sendLinkLog(interaction.client, interaction.member, data.links[interaction.user.id]);
+  await refreshPanel(interaction.client);
+}
+
+async function refreshPanel(client) {
+  try {
+    const data = loadData();
+    const panelId = data.state?.panelMessageId;
+    if (!panelId) return;
+    const channelId = process.env.VERIFY_CHANNEL_ID || DEFAULT_CHANNEL_ID;
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel || channel.type !== ChannelType.GuildText) return;
+    const message = await channel.messages.fetch(panelId).catch(() => null);
+    if (!message) return;
+    await message.edit(buildPanelPayload());
+  } catch (error) {
+    console.error('[RobloxLinking] Failed to refresh panel:', error);
+  }
 }
 
 async function ensurePanel(client) {
@@ -339,34 +408,39 @@ async function ensurePanel(client) {
         .then((channel) => channel.messages.fetch(data.state.panelMessageId))
         .catch(() => null);
       if (existing) {
-        console.log('[Verification] Panel already present.');
+        try {
+          await existing.edit(buildPanelPayload());
+          console.log('[RobloxLinking] Panel refreshed.');
+        } catch (error) {
+          console.error('[RobloxLinking] Failed to refresh existing panel:', error);
+        }
         return;
       }
     }
 
     const channel = await client.channels.fetch(channelId);
     if (!channel || channel.type !== ChannelType.GuildText) {
-      console.warn(`[Verification] Channel ${channelId} not found or not a text channel.`);
+      console.warn(`[RobloxLinking] Channel ${channelId} not found or not a text channel.`);
       return;
     }
 
     const permissions = channel.permissionsFor(client.user);
     if (!permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
-      console.warn(`[Verification] Missing permissions in channel #${channel.name}.`);
+      console.warn(`[RobloxLinking] Missing permissions in channel #${channel.name}.`);
       return;
     }
 
     const sent = await channel.send(buildPanelPayload());
     data.state.panelMessageId = sent.id;
     saveData(data);
-    console.log('[Verification] Posted verification panel.');
+    console.log('[RobloxLinking] Posted verification panel.');
   } catch (error) {
-    console.error('[Verification] Failed to ensure panel:', error);
+    console.error('[RobloxLinking] Failed to ensure panel:', error);
   }
 }
 
 module.exports = {
-  name: 'verification',
+  name: 'roblox-linking',
   init(client) {
     client.once(Events.ClientReady, () => ensurePanel(client));
 
@@ -381,7 +455,7 @@ module.exports = {
         else if (interaction.customId === 'zvg:verify:submit') await handleSubmit(interaction);
         else if (interaction.customId === 'zvg:verify:check') await handleCheck(interaction);
       } catch (error) {
-        console.error('[Verification]', error);
+        console.error('[RobloxLinking]', error);
         const fallback = { content: 'Something went wrong. Please try again.', flags: MessageFlags.Ephemeral };
         if (interaction.replied || interaction.deferred) {
           await interaction.followUp(fallback).catch(() => null);

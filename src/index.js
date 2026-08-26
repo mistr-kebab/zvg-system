@@ -6,6 +6,7 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
+client.setMaxListeners(0);
 
 client.once('clientReady', (c) => {
   console.log(`Logged in as ${c.user.tag}`);
@@ -16,17 +17,30 @@ if (!process.env.DISCORD_TOKEN) {
   process.exit(1);
 }
 
-const cogsPath = path.join(__dirname, 'cogs');
-for (const file of fs.readdirSync(cogsPath)) {
-  if (!file.endsWith('.js')) continue;
+const moduleDirs = ['cogs', 'logging'];
 
-  try {
-    const cog = require(path.join(cogsPath, file));
-    cog.init(client);
-    console.log(`[Cogs] Loaded: ${cog.name ?? path.basename(file, '.js')}`);
-  } catch (error) {
-    console.error(`[Cogs] Failed to load ${file}:`, error);
+function loadModulesRecursive(baseDir, dirLabel) {
+  for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
+    const fullPath = path.join(baseDir, entry.name);
+    if (entry.isDirectory()) {
+      loadModulesRecursive(fullPath, dirLabel);
+    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+      try {
+        const cog = require(fullPath);
+        if (typeof cog.init === 'function') cog.init(client);
+        const rel = path.relative(path.join(__dirname, dirLabel), fullPath);
+        console.log(`[${dirLabel}] Loaded: ${cog.name ?? rel}`);
+      } catch (error) {
+        console.error(`[${dirLabel}] Failed to load ${fullPath}:`, error);
+      }
+    }
   }
+}
+
+for (const dir of moduleDirs) {
+  const dirPath = path.join(__dirname, dir);
+  if (!fs.existsSync(dirPath)) continue;
+  loadModulesRecursive(dirPath, dir);
 }
 
 client.login(process.env.DISCORD_TOKEN).catch((error) => {

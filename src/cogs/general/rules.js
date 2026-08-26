@@ -1,13 +1,17 @@
 const {
   ChannelType,
   ContainerBuilder,
+  MediaGalleryBuilder,
+  MediaGalleryItemBuilder,
   MessageFlags,
   PermissionFlagsBits,
   SeparatorBuilder,
   TextDisplayBuilder,
 } = require('discord.js');
+const path = require('node:path');
 
 const DEFAULT_CHANNEL_ID = '1540997569210093568';
+const HEADER_IMAGE_PATH = path.join(process.cwd(), 'assets', 'rules.png');
 
 const RULE_CATEGORIES = [
   {
@@ -82,9 +86,14 @@ const RULE_CATEGORIES = [
   },
 ];
 
-function buildHeaderContainer() {
+function buildHeaderContainer(imageUrl) {
   return new ContainerBuilder()
     .setAccentColor(0x5865f2)
+    .addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(
+        new MediaGalleryItemBuilder().setURL(imageUrl ?? 'attachment://rules.png'),
+      ),
+    )
     .addTextDisplayComponents(
       new TextDisplayBuilder().setContent('# Zero Visit Games — Server Rules'),
       new TextDisplayBuilder().setContent(
@@ -114,9 +123,13 @@ function buildCategoryContainer(category, index) {
     );
 }
 
-function buildPayloads() {
+function buildPayloads(headerImageUrl) {
   const payloads = [
-    { flags: MessageFlags.IsComponentsV2, components: [buildHeaderContainer()] },
+    {
+      flags: MessageFlags.IsComponentsV2,
+      components: [buildHeaderContainer(headerImageUrl)],
+      ...(headerImageUrl ? {} : { files: [HEADER_IMAGE_PATH] }),
+    },
   ];
 
   RULE_CATEGORIES.forEach((category, i) => {
@@ -145,15 +158,56 @@ async function syncRules(client) {
       return;
     }
 
-    const payloads = buildPayloads();
-
     const fetched = await channel.messages.fetch({ limit: 100 });
     const existing = [...fetched.values()]
       .filter((message) => message.author.id === client.user.id)
       .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
+    const expectedCount = 1 + RULE_CATEGORIES.length;
+    const headerImageUrl =
+      existing.length === expectedCount ? existing[0]?.attachments?.first()?.url ?? null : null;
+    const payloads = buildPayloads(headerImageUrl);
+
     if (existing.length === payloads.length) {
-      console.log(`[Rules] All ${payloads.length} rule messages are present. Nothing to do.`);
+      let updated = 0;
+      let skipped = 0;
+      for (let i = 0; i < payloads.length; i++) {
+        try {
+          // Diff-check: skip edit if already identical to avoid rate-limit + timeout spam
+          const current = existing[i];
+          const isSame = (() => {
+            try {
+              // Compare components JSON + attachments
+              const curComps = JSON.stringify(current.components.map(c => c.toJSON ? c.toJSON() : c));
+              const newComps = JSON.stringify(payloads[i].components.map(c => c.toJSON ? c.toJSON() : c));
+              if (curComps !== newComps) return false;
+              const hasFile = !!payloads[i].files;
+              const hasAttach = current.attachments.size > 0;
+              if (hasFile && hasAttach) return true;
+              if (!hasFile && !hasAttach) return true;
+              return false;
+            } catch { return false; }
+          })();
+          if (isSame) {
+            skipped++;
+            continue;
+          }
+          // Retry once on timeout
+          try {
+            await existing[i].edit(payloads[i]);
+          } catch (e) {
+            if (e.code === 'UND_ERR_CONNECT_TIMEOUT' || e.message?.includes('Timeout')) {
+              await new Promise(r => setTimeout(r, 2000));
+              await existing[i].edit(payloads[i]);
+            } else throw e;
+          }
+          updated++;
+        } catch (error) {
+          console.error(`[Rules] Failed to update rule message ${i + 1}:`, error);
+        }
+      }
+      console.log(`[Rules] Synced ${updated} updated, ${skipped} skipped (${payloads.length} total).`);
+      if (updated === 0 && skipped === payloads.length) console.log('[Rules] All rule messages already up-to-date.');
       return;
     }
 

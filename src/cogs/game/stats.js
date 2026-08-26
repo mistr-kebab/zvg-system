@@ -1,0 +1,273 @@
+/**
+ * /stats — Interactive flow: /stats -> Embed with Game Dropdown -> Continue -> Member picker -> Stats Embed
+ * Keeps same DataStore / rank logic, but UI is now dropdown+continue+user-select as requested.
+ */
+const {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  Events,
+  InteractionContextType,
+  ApplicationIntegrationType,
+  MessageFlags,
+  ContainerBuilder,
+  TextDisplayBuilder,
+  SeparatorBuilder,
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  UserSelectMenuBuilder,
+  ModalBuilder,
+  LabelBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+} = require('discord.js');
+const { getLink } = require('../../utils/verificationStore');
+
+const GAMES = {
+  color_panic: {
+    displayName: 'Color Panic',
+    emoji: '<:ColorPanic:1542162042138661016>',
+    universeId: process.env.ROBLOX_UNIVERSE_ID,
+    datastoreName: process.env.ROBLOX_DATASTORE_NAME,
+    leaderboardName: process.env.ROBLOX_LEADERBOARD_DATASTORE_NAME,
+  },
+};
+
+const leaderboardCache = new Map();
+const LEADERBOARD_TTL_MS = 5 * 60 * 1000;
+const pendingGame = new Map(); // discordId -> gameKey
+
+function formatPlaytime(s){ const v=Number(s)||0; const h=Math.floor(v/3600), m=Math.floor((v%3600)/60); if(h>0) return `${h}h ${m}m`; if(m>0) return `${m}m`; return `${v}s`; }
+
+async function resolveRobloxUser(input){
+  if(!input) return null;
+  const mentionMatch = input.match(/^<@!?(\d+)>$/);
+  if(mentionMatch){
+    const link=getLink(mentionMatch[1]);
+    if(!link) throw {userMsg:'This user has not linked their Roblox account yet. Use `/link`.'};
+    try{ const r=await fetch(`https://users.roblox.com/v1/users/${link.robloxUserId}`); const j=await r.json(); return {userId:String(link.robloxUserId), username:j.name||link.robloxUsername}; }catch{ return {userId:String(link.robloxUserId), username:link.robloxUsername}; }
+  }
+  if(/^\d{17,19}$/.test(input.trim())){
+    const link=getLink(input.trim());
+    if(!link) throw {userMsg:'This user has not linked their Roblox account yet. Use `/link`.'};
+    return {userId:String(link.robloxUserId), username:link.robloxUsername};
+  }
+  const username=input.trim();
+  const res=await fetch('https://users.roblox.com/v1/usernames/users',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({usernames:[username]})});
+  if(!res.ok) throw new Error(`users ${res.status}`);
+  const data=await res.json();
+  const user=data.data?.[0];
+  if(!user) throw {userMsg:'Roblox user not found.'};
+  return {userId:String(user.id), username:user.name};
+}
+async function fetchDataStoreEntry(game, robloxUserId){
+  const universeId=game.universeId, datastoreName=game.datastoreName, apiKey=process.env.ROBLOX_OPEN_CLOUD_KEY;
+  if(!universeId||!datastoreName||!apiKey) throw new Error('Missing ROBLOX env');
+  const keysToTry=[`${robloxUserId}`,`Player_${robloxUserId}`];
+  for(const entryKey of keysToTry){
+    const url=`https://apis.roblox.com/datastore/v1/universes/${universeId}/standard-datastores/datastore/entries/entry?datastoreName=${encodeURIComponent(datastoreName)}&entryKey=${encodeURIComponent(entryKey)}`;
+    const res=await fetch(url,{headers:{'x-api-key':apiKey}});
+    if(res.status===404) continue;
+    if(!res.ok){ const txt=await res.text().catch(()=> ''); throw new Error(`DataStore ${res.status}: ${txt.slice(0,300)}`); }
+    const json=await res.json();
+    let payload=json;
+    if(typeof json==='string'){ try{payload=JSON.parse(json);}catch{payload=null;} }
+    else if(json.data && typeof json.data==='string'){ try{payload=JSON.parse(json.data);}catch{payload=json.data;} }
+    else if(json.data && typeof json.data==='object') payload=json.data;
+    if(payload && typeof payload.value==='string'){ try{payload=JSON.parse(payload.value);}catch{} }
+    if(payload) return payload;
+  }
+  return null;
+}
+async function fetchAvatarHeadshot(robloxUserId){
+  try{ const r=await fetch(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${robloxUserId}&size=150x150&format=Png&isCircular=false`); if(!r.ok) return null; const j=await r.json(); return j.data?.[0]?.imageUrl||null; }catch{ return null; }
+}
+async function getRankCached(game, robloxUserId){
+  const key=game.displayName; const now=Date.now(); let entry=leaderboardCache.get(key);
+  if(!entry||now-entry.updatedAt>LEADERBOARD_TTL_MS){ entry=await refreshLeaderboard(game); leaderboardCache.set(key,entry); }
+  const rank=entry.rankMap.get(String(robloxUserId)); return rank?`#${rank}`:'Unranked';
+}
+async function refreshLeaderboard(game){
+  const universeId=game.universeId, datastoreName=game.leaderboardName, apiKey=process.env.ROBLOX_OPEN_CLOUD_KEY;
+  const rankMap=new Map();
+  if(!universeId||!datastoreName||!apiKey){ return {rankMap, updatedAt:Date.now()}; }
+  try{
+    let cursor=''; let rank=1;
+    for(let page=0;page<10;page++){
+      const url=`https://apis.roblox.com/datastore/v1/universes/${universeId}/ordered-datastores/datastore/entries?datastoreName=${encodeURIComponent(datastoreName)}&maxPageSize=100&orderBy=Descending${cursor?`&cursor=${encodeURIComponent(cursor)}`:''}`;
+      const r=await fetch(url,{headers:{'x-api-key':apiKey}});
+      if(!r.ok) break;
+      const j=await r.json(); const entries=j.entries||j.data||[];
+      for(const e of entries){ const rawKey=e.id||e.entryKey||e.key||''; const uid=String(rawKey).replace(/^Player_/,''); if(uid) rankMap.set(uid,rank++); }
+      cursor=j.nextPageCursor||''; if(!cursor) break;
+    }
+    if(rankMap.size) console.log(`[Stats] Cached ${game.displayName}: ${rankMap.size}`);
+  }catch(e){ /* silent — Pterodactyl often ECONNREFUSED, rank stays Unranked */ }
+  return {rankMap, updatedAt:Date.now()};
+}
+function startLeaderboardAutoRefresh(){
+  setInterval(async()=>{
+    for(const game of Object.values(GAMES)){
+      if(!game.universeId||!game.leaderboardName) continue;
+      try{ leaderboardCache.set(game.displayName, await refreshLeaderboard(game)); }catch{}
+    }
+  }, LEADERBOARD_TTL_MS);
+}
+
+function buildGameSelectPayload(selectedKey=null){
+  const options = Object.entries(GAMES).map(([value,g])=>{
+    const opt = new StringSelectMenuOptionBuilder().setLabel(g.displayName).setValue(value).setDefault(value===selectedKey);
+    if (g.emoji) try { opt.setEmoji(g.emoji); } catch {}
+    return opt;
+  });
+  const select = new StringSelectMenuBuilder().setCustomId('zvg:stats:game').setPlaceholder('Select a game').addOptions(options).setMinValues(1).setMaxValues(1);
+  const hasSelection = !!selectedKey;
+  const cont = new ContainerBuilder().setAccentColor(0x00a2ff)
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent('## Game Stats'), new TextDisplayBuilder().setContent('Select a game, click **Continue**, then choose a member/player.'))
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+    .addActionRowComponents(new ActionRowBuilder().addComponents(select))
+    .addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('zvg:stats:continue').setLabel('Continue').setStyle(ButtonStyle.Primary).setDisabled(!hasSelection)));
+  return { flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral, components:[cont] };
+}
+function buildMemberSelectPayload(gameKey){
+  const game=GAMES[gameKey];
+  const userSelect = new UserSelectMenuBuilder().setCustomId('zvg:stats:user').setPlaceholder('Select a member').setMinValues(1).setMaxValues(1);
+  const cont = new ContainerBuilder().setAccentColor(0x00a2ff)
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(`## ${game.displayName} — Select Player`), new TextDisplayBuilder().setContent('Choose a Discord member (must be linked) or click **Enter Roblox username** for any Roblox user.'))
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+    .addActionRowComponents(new ActionRowBuilder().addComponents(userSelect))
+    .addActionRowComponents(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('zvg:stats:roblox_btn').setLabel('Enter Roblox username').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('zvg:stats:back').setLabel('Back').setStyle(ButtonStyle.Secondary),
+    ));
+  return { flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral, components:[cont] };
+}
+
+const data = new SlashCommandBuilder()
+  .setName('stats')
+  .setDescription('Show game stats — interactive')
+  .setContexts(InteractionContextType.Guild)
+  .setIntegrationTypes(ApplicationIntegrationType.GuildInstall);
+
+module.exports = {
+  name: 'game-stats',
+  init(client){
+    const { onReadyRegister } = require('../../utils/slash');
+    onReadyRegister(client, data);
+    client.once(Events.ClientReady, ()=>{
+      startLeaderboardAutoRefresh();
+      for(const g of Object.values(GAMES)){
+        if(g.universeId && g.leaderboardName) refreshLeaderboard(g).then(c=>leaderboardCache.set(g.displayName,c)).catch(()=>null);
+      }
+    });
+
+    client.on(Events.InteractionCreate, async (interaction)=>{
+      try{
+        // debug
+        if(interaction.customId?.startsWith('zvg:stats:')) console.log(`[Stats] ${interaction.customId} by ${interaction.user.id} type=${interaction.type}`);
+        if(interaction.isChatInputCommand() && interaction.commandName==='stats'){
+          await interaction.reply(buildGameSelectPayload());
+          return;
+        }
+        if(interaction.isStringSelectMenu() && interaction.customId==='zvg:stats:game'){
+          const chosen = interaction.values[0];
+          pendingGame.set(interaction.user.id, chosen);
+          await interaction.update(buildGameSelectPayload(chosen));
+          return;
+        }
+        if(interaction.isButton() && interaction.customId==='zvg:stats:continue'){
+          const gameKey = pendingGame.get(interaction.user.id);
+          if(!gameKey){
+            await interaction.reply({ content:'Please select a game first.', flags: MessageFlags.Ephemeral }).catch(()=>null);
+            return;
+          }
+          await interaction.update(buildMemberSelectPayload(gameKey));
+          return;
+        }
+        if(interaction.isButton() && interaction.customId==='zvg:stats:back'){
+          const sel = pendingGame.get(interaction.user.id) || null;
+          await interaction.update(buildGameSelectPayload(sel));
+          return;
+        }
+        if(interaction.isButton() && interaction.customId==='zvg:stats:roblox_btn'){
+          const gameKey = pendingGame.get(interaction.user.id);
+          if(!gameKey){ await interaction.reply({ content:'Select a game first.', flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
+          const modal = new ModalBuilder().setCustomId(`zvg:stats:modal:${gameKey}`).setTitle('Roblox username')
+            .addLabelComponents(new LabelBuilder().setLabel('Roblox Username').setTextInputComponent(new TextInputBuilder().setCustomId('robloxUsername').setStyle(TextInputStyle.Short).setRequired(true).setMinLength(3).setMaxLength(20)));
+          await interaction.showModal(modal);
+          return;
+        }
+        if((interaction.isUserSelectMenu && interaction.isUserSelectMenu() && interaction.customId==='zvg:stats:user') || (interaction.isAnySelectMenu && interaction.isAnySelectMenu() && interaction.customId==='zvg:stats:user')){
+          const gameKey = pendingGame.get(interaction.user.id);
+          const game = GAMES[gameKey];
+          if(!game){ await interaction.reply({ content:'Select a game first.', flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
+          const selectedUserId = interaction.values[0];
+          await interaction.deferUpdate();
+          // resolve via linked
+          let resolved;
+          try{
+            const link = getLink(selectedUserId);
+            if(!link) throw {userMsg:'This user has not linked their Roblox account yet. Use `/link`.'};
+            try{ const r=await fetch(`https://users.roblox.com/v1/users/${link.robloxUserId}`); const j=await r.json(); resolved={userId:String(link.robloxUserId), username:j.name||link.robloxUsername}; }catch{ resolved={userId:String(link.robloxUserId), username:link.robloxUsername}; }
+          }catch(e){
+            if(e.userMsg){ await interaction.editReply({ content:e.userMsg, components: [], embeds: [], flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
+            await interaction.editReply({ content:'Something went wrong, please try again later.', components: [], embeds: [], flags: MessageFlags.Ephemeral }).catch(()=>null); return;
+          }
+          await sendStats(interaction, game, resolved);
+          return;
+        }
+        if(interaction.isModalSubmit() && interaction.customId.startsWith('zvg:stats:modal:')){
+          const gameKey = interaction.customId.split(':').pop();
+          const game = GAMES[gameKey];
+          if(!game){ await interaction.reply({ content:'Unknown game.', flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
+          const username = interaction.fields.getTextInputValue('robloxUsername').trim();
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          let resolved;
+          try{
+            const res=await fetch('https://users.roblox.com/v1/usernames/users',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({usernames:[username]})});
+            const data=await res.json(); const user=data.data?.[0];
+            if(!user){ await interaction.editReply({ content:'Roblox user not found.' }).catch(()=>null); return; }
+            resolved={userId:String(user.id), username:user.name};
+          }catch(e){ console.error(e); await interaction.editReply({content:'Something went wrong, please try again later.'}).catch(()=>null); return; }
+          await sendStatsModal(interaction, game, resolved);
+          return;
+        }
+      }catch(e){ console.error('[Stats] interaction error',e); }
+    });
+
+    async function sendStats(interaction, game, resolved){
+      let stats=null, thumb=null, rank='Unranked';
+      try{
+        const [s,t,r]=await Promise.all([fetchDataStoreEntry(game,resolved.userId), fetchAvatarHeadshot(resolved.userId), getRankCached(game,resolved.userId)]);
+        stats=s; thumb=t; rank=r;
+      }catch(e){
+        console.error('[Stats] fetch failed', e.cause?.code || e.message);
+        // edit same embed (not new message) as requested
+        await interaction.editReply({ content:`Could not fetch stats for **${resolved.username}** — Roblox API unreachable (\`${e.cause?.code || 'fetch failed'}\`). Try again later.`, components: [], embeds: [], flags: MessageFlags.Ephemeral }).catch(()=>null);
+        return;
+      }
+      if(!stats){ await interaction.editReply({ content:`No stats found for **${resolved.username}** — this player hasn't played **${game.displayName}** yet.`, components: [], embeds: [], flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
+      const coins=stats.Coins??stats.coins??0, deaths=stats.Deaths??stats.deaths??0, wins=stats.Wins??stats.wins??0, playtime=stats.PlayTime??stats.Playtime??stats.playtime??0;
+      const embed=new EmbedBuilder().setTitle(resolved.username).setURL(`https://www.roblox.com/users/${resolved.userId}/profile`).setThumbnail(thumb||null)
+        .addFields({name:'Coins',value:String(coins),inline:true},{name:'Deaths',value:String(deaths),inline:true},{name:'Wins',value:String(wins),inline:true},{name:'Playtime',value:formatPlaytime(playtime),inline:true},{name:'Rank',value:rank,inline:true})
+        .setFooter({text:game.displayName}).setColor(0x00a2ff).setTimestamp();
+      await interaction.editReply({ content: '', components: [], embeds: [embed], flags: MessageFlags.Ephemeral }).catch(()=>null);
+      pendingGame.delete(interaction.user.id);
+    }
+    async function sendStatsModal(interaction, game, resolved){
+      let stats=null, thumb=null, rank='Unranked';
+      try{
+        const [s,t,r]=await Promise.all([fetchDataStoreEntry(game,resolved.userId), fetchAvatarHeadshot(resolved.userId), getRankCached(game,resolved.userId)]);
+        stats=s; thumb=t; rank=r;
+      }catch(e){ console.error(e); await interaction.editReply({ content:'Something went wrong, please try again later.' }).catch(()=>null); return; }
+      if(!stats){ await interaction.editReply({ content:`No stats found for **${resolved.username}** — this player hasn't played **${game.displayName}** yet.` }).catch(()=>null); return; }
+      const coins=stats.Coins??stats.coins??0, deaths=stats.Deaths??stats.deaths??0, wins=stats.Wins??stats.wins??0, playtime=stats.PlayTime??stats.Playtime??stats.playtime??0;
+      const embed=new EmbedBuilder().setTitle(resolved.username).setURL(`https://www.roblox.com/users/${resolved.userId}/profile`).setThumbnail(thumb||null)
+        .addFields({name:'Coins',value:String(coins),inline:true},{name:'Deaths',value:String(deaths),inline:true},{name:'Wins',value:String(wins),inline:true},{name:'Playtime',value:formatPlaytime(playtime),inline:true},{name:'Rank',value:rank,inline:true})
+        .setFooter({text:game.displayName}).setColor(0x00a2ff).setTimestamp();
+      await interaction.editReply({ embeds:[embed] }).catch(()=>null);
+    }
+  }
+};

@@ -15,10 +15,12 @@ New cogs are loaded automatically — just drop a `.js` file into `src/cogs/`.
 ```
 src/
 ├── index.js              # Entry point - starts the bot and auto-loads all cogs
-└── cogs/
-    ├── welcome.js        # Welcome message on member join
-    ├── rules.js          # Server rules (edit rule texts here)
-    └── verification.js   # Roblox account verification
+├── cogs/
+│   ├── welcome.js        # Welcome message on member join
+│   ├── rules.js          # Server rules (edit rule texts here)
+│   └── verification.js   # Roblox account verification
+└── logging/
+    └── join-leave.js     # Join/leave logs with invite tracking
 ```
 
 Verification links are stored in `data/verification.json` (gitignored).
@@ -53,6 +55,8 @@ copy .env.example .env
 | `WELCOME_CHANNEL_ID` | ID of the channel where welcome messages are posted |
 | `RULES_CHANNEL_ID` | ID of the channel where the server rules are posted |
 | `VERIFY_CHANNEL_ID` | ID of the channel containing the verification panel |
+| `JOIN_LEAVE_LOG_CHANNEL_ID` | ID of the channel for join/leave logs (with invite tracking) |
+| `VERIFICATION_LOG_CHANNEL_ID` | ID of the channel where Roblox link verifications are logged |
 
 To get a channel ID: enable Developer Mode in Discord (Settings → Advanced), then right-click a channel → **Copy Channel ID**.
 
