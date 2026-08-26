@@ -306,11 +306,25 @@ module.exports = {
         await interaction.editReply({ flags: MessageFlags.IsComponentsV2, components: [noStatsContainer], embeds: [], content: undefined }).catch(async()=> await interaction.followUp({ flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral, components: [noStatsContainer] }).catch(()=>null)); return;
       }
       const coins=stats.Coins??stats.coins??0, deaths=stats.Deaths??stats.deaths??0, wins=stats.Wins??stats.wins??0, playtime=stats.PlayTime??stats.Playtime??stats.playtime??0;
-      const embed=new EmbedBuilder().setTitle(resolved.username).setURL(`https://www.roblox.com/users/${resolved.userId}/profile`).setThumbnail(thumb||null)
-        .addFields({name:'Coins',value:String(coins),inline:true},{name:'Deaths',value:String(deaths),inline:true},{name:'Wins',value:String(wins),inline:true},{name:'Playtime',value:formatPlaytime(playtime),inline:true},{name:'Rank',value:rank,inline:true})
-        .setFooter({text:game.displayName}).setColor(0x00a2ff).setTimestamp();
-      console.log(`[Stats] sending embed for ${resolved.username}`);
-      await interaction.editReply({ content: '', components: [], embeds: [embed] }).catch(async(e)=> { console.error('[Stats] editReply embed failed', e); await interaction.followUp({ embeds:[embed], flags: MessageFlags.Ephemeral }).catch(()=>null); });
+      const profile = `https://www.roblox.com/users/${resolved.userId}/profile`;
+      const statsContainer = new ContainerBuilder().setAccentColor(0x00a2ff)
+        .addSectionComponents(
+          new SectionBuilder()
+            .addTextDisplayComponents(
+              new TextDisplayBuilder().setContent(`## [${resolved.username}](${profile})`),
+              new TextDisplayBuilder().setContent(
+                [
+                  `**Coins:** \`${coins}\`  **Deaths:** \`${deaths}\`  **Wins:** \`${wins}\``,
+                  `**Playtime:** \`${formatPlaytime(playtime)}\`  **Rank:** \`${rank}\``,
+                ].join('\n'),
+              ),
+            )
+            .setThumbnailAccessory(new ThumbnailBuilder().setURL(thumb || 'https://tr.rbxcdn.com/53eb9b17fe143ff365413e30c3a6d32ea/150/150/AvatarHeadshot/Png')),
+        )
+        .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+        .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# ${game.displayName} • [Profile](${profile})`));
+      console.log(`[Stats] sending container for ${resolved.username}`);
+      await interaction.editReply({ flags: MessageFlags.IsComponentsV2, components: [statsContainer], embeds: [], content: undefined }).catch(async(e)=> { console.error('[Stats] editReply container failed', e); await interaction.followUp({ flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral, components: [statsContainer] }).catch(()=>null); });
       pendingGame.delete(String(interaction.user.id));
     }
     async function sendStatsModal(interaction, game, resolved){
@@ -330,10 +344,24 @@ module.exports = {
         await interaction.editReply({ flags: MessageFlags.IsComponentsV2, components: [noStatsContainer], embeds: [], content: undefined }).catch(()=>null); return;
       }
       const coins=stats.Coins??stats.coins??0, deaths=stats.Deaths??stats.deaths??0, wins=stats.Wins??stats.wins??0, playtime=stats.PlayTime??stats.Playtime??stats.playtime??0;
-      const embed=new EmbedBuilder().setTitle(resolved.username).setURL(`https://www.roblox.com/users/${resolved.userId}/profile`).setThumbnail(thumb||null)
-        .addFields({name:'Coins',value:String(coins),inline:true},{name:'Deaths',value:String(deaths),inline:true},{name:'Wins',value:String(wins),inline:true},{name:'Playtime',value:formatPlaytime(playtime),inline:true},{name:'Rank',value:rank,inline:true})
-        .setFooter({text:game.displayName}).setColor(0x00a2ff).setTimestamp();
-      await interaction.editReply({ embeds:[embed] }).catch(()=>null);
+      const profile = `https://www.roblox.com/users/${resolved.userId}/profile`;
+      const statsContainer = new ContainerBuilder().setAccentColor(0x00a2ff)
+        .addSectionComponents(
+          new SectionBuilder()
+            .addTextDisplayComponents(
+              new TextDisplayBuilder().setContent(`## [${resolved.username}](${profile})`),
+              new TextDisplayBuilder().setContent(
+                [
+                  `**Coins:** \`${coins}\`  **Deaths:** \`${deaths}\`  **Wins:** \`${wins}\``,
+                  `**Playtime:** \`${formatPlaytime(playtime)}\`  **Rank:** \`${rank}\``,
+                ].join('\n'),
+              ),
+            )
+            .setThumbnailAccessory(new ThumbnailBuilder().setURL(thumb || 'https://tr.rbxcdn.com/53eb9b17fe143ff365413e30c3a6d32ea/150/150/AvatarHeadshot/Png')),
+        )
+        .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+        .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# ${game.displayName} • [Profile](${profile})`));
+      await interaction.editReply({ flags: MessageFlags.IsComponentsV2, components: [statsContainer], embeds: [], content: undefined }).catch(()=>null);
       pendingGame.delete(String(interaction.user.id));
     }
   }
