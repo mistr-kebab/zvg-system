@@ -203,12 +203,13 @@ module.exports = {
           await interaction.showModal(modal);
           return;
         }
-        if(interaction.isUserSelectMenu?.() && interaction.customId==='zvg:stats:user'){
+        if((interaction.isUserSelectMenu?.() || interaction.isAnySelectMenu?.()) && interaction.customId==='zvg:stats:user'){
           const gameKey = getPendingGame(interaction.user.id);
           const game = GAMES[gameKey];
           if(!game){ await interaction.reply({ content:'Select a game first.', flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
           const selectedUserId = interaction.values[0];
-          await interaction.deferUpdate();
+          console.log(`[Stats] user-select ${selectedUserId} for game ${gameKey} by ${interaction.user.id}`);
+          try { await interaction.deferUpdate(); } catch (e) { console.error('[Stats] deferUpdate failed', e); }
           // resolve via linked
           let resolved;
           try{
@@ -216,9 +217,11 @@ module.exports = {
             if(!link) throw {userMsg:'This user has not linked their Roblox account yet. Use `/verify` to link.'};
             try{ const r=await fetch(`https://users.roblox.com/v1/users/${link.robloxUserId}`); const j=await r.json(); resolved={userId:String(link.robloxUserId), username:j.name||link.robloxUsername}; }catch{ resolved={userId:String(link.robloxUserId), username:link.robloxUsername}; }
           }catch(e){
-            if(e.userMsg){ await interaction.editReply({ content:e.userMsg, components: [], embeds: [], flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
-            await interaction.editReply({ content:'Something went wrong, please try again later.', components: [], embeds: [], flags: MessageFlags.Ephemeral }).catch(()=>null); return;
+            console.error('[Stats] resolve failed', e);
+            if(e.userMsg){ await interaction.editReply({ content:e.userMsg, components: [], embeds: [] }).catch(async()=> await interaction.followUp({ content:e.userMsg, flags: MessageFlags.Ephemeral }).catch(()=>null)); return; }
+            await interaction.editReply({ content:'Something went wrong, please try again later.', components: [], embeds: [] }).catch(async()=> await interaction.followUp({ content:'Something went wrong, please try again later.', flags: MessageFlags.Ephemeral }).catch(()=>null)); return;
           }
+          console.log(`[Stats] resolved ${resolved.userId} ${resolved.username}`);
           await sendStats(interaction, game, resolved);
           return;
         }
@@ -242,22 +245,28 @@ module.exports = {
     });
 
     async function sendStats(interaction, game, resolved){
+      console.log(`[Stats] sendStats start ${resolved.userId} ${game.displayName}`);
       let stats=null, thumb=null, rank='Unranked';
       try{
         const [s,t,r]=await Promise.all([fetchDataStoreEntry(game,resolved.userId), fetchAvatarHeadshot(resolved.userId), getRankCached(game,resolved.userId)]);
         stats=s; thumb=t; rank=r;
+        console.log(`[Stats] fetched stats=${!!stats} thumb=${!!thumb} rank=${rank}`);
       }catch(e){
-        console.error('[Stats] fetch failed', e.cause?.code || e.message);
-        // edit same embed (not new message) as requested
-        await interaction.editReply({ content:`Could not fetch stats for **${resolved.username}** — Roblox API unreachable (\`${e.cause?.code || 'fetch failed'}\`). Try again later.`, components: [], embeds: [], flags: MessageFlags.Ephemeral }).catch(()=>null);
+        console.error('[Stats] fetch failed', e.message, e.cause?.code, e.stack);
+        const msg = e.message?.includes('Missing ROBLOX env') ? 'Stats not configured — missing ROBLOX_OPEN_CLOUD_KEY / Universe ID on Pterodactyl (.env).' : `Could not fetch stats for **${resolved.username}** — Roblox API unreachable (\`${e.cause?.code || e.message || 'fetch failed'}\`). Try again later.`;
+        await interaction.editReply({ content: msg, components: [], embeds: [] }).catch(async()=> await interaction.followUp({ content: msg, flags: MessageFlags.Ephemeral }).catch(()=>null));
         return;
       }
-      if(!stats){ await interaction.editReply({ content:`No stats found for **${resolved.username}** — this player hasn't played **${game.displayName}** yet.`, components: [], embeds: [], flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
+      if(!stats){
+        console.log(`[Stats] no stats for ${resolved.username}`);
+        await interaction.editReply({ content:`No stats found for **${resolved.username}** — this player hasn't played **${game.displayName}** yet.`, components: [], embeds: [] }).catch(async()=> await interaction.followUp({ content:`No stats found for **${resolved.username}**.`, flags: MessageFlags.Ephemeral }).catch(()=>null)); return;
+      }
       const coins=stats.Coins??stats.coins??0, deaths=stats.Deaths??stats.deaths??0, wins=stats.Wins??stats.wins??0, playtime=stats.PlayTime??stats.Playtime??stats.playtime??0;
       const embed=new EmbedBuilder().setTitle(resolved.username).setURL(`https://www.roblox.com/users/${resolved.userId}/profile`).setThumbnail(thumb||null)
         .addFields({name:'Coins',value:String(coins),inline:true},{name:'Deaths',value:String(deaths),inline:true},{name:'Wins',value:String(wins),inline:true},{name:'Playtime',value:formatPlaytime(playtime),inline:true},{name:'Rank',value:rank,inline:true})
         .setFooter({text:game.displayName}).setColor(0x00a2ff).setTimestamp();
-      await interaction.editReply({ content: '', components: [], embeds: [embed], flags: MessageFlags.Ephemeral }).catch(()=>null);
+      console.log(`[Stats] sending embed for ${resolved.username}`);
+      await interaction.editReply({ content: '', components: [], embeds: [embed] }).catch(async(e)=> { console.error('[Stats] editReply embed failed', e); await interaction.followUp({ embeds:[embed], flags: MessageFlags.Ephemeral }).catch(()=>null); });
       pendingGame.delete(String(interaction.user.id));
     }
     async function sendStatsModal(interaction, game, resolved){
