@@ -81,23 +81,34 @@ async function fetchDataStoreEntry(game, robloxUserId){
   const universeId=game.universeId, datastoreName=game.datastoreName, apiKey=process.env.ROBLOX_OPEN_CLOUD_KEY;
   if(!universeId||!datastoreName||!apiKey) throw new Error('Missing ROBLOX env');
   const keysToTry=[`${robloxUserId}`,`Player_${robloxUserId}`];
+  const scopes=['global',''];
   for(const entryKey of keysToTry){
-    const url=`https://apis.roblox.com/datastore/v1/universes/${universeId}/standard-datastores/datastore/entries/entry?datastoreName=${encodeURIComponent(datastoreName)}&entryKey=${encodeURIComponent(entryKey)}`;
-    console.log(`[Stats] fetch ${datastoreName}/${entryKey} uni=${universeId}`);
-    const res=await fetch(url,{headers:{'x-api-key':apiKey}});
-    console.log(`[Stats] fetch status ${res.status} for ${entryKey}`);
-    if(res.status===404) continue;
-    if(!res.ok){ const txt=await res.text().catch(()=> ''); console.error(`[Stats] DataStore error ${res.status} ${txt.slice(0,500)}`); throw new Error(`DataStore ${res.status}: ${txt.slice(0,300)}`); }
-    const json=await res.json();
-    console.log(`[Stats] raw json keys=${Object.keys(json||{}).join(',')} preview=${JSON.stringify(json).slice(0,500)}`);
-    let payload=json;
-    if(typeof json==='string'){ try{payload=JSON.parse(json);}catch{payload=null;} }
-    else if(json.data && typeof json.data==='string'){ try{payload=JSON.parse(json.data);}catch{payload=json.data;} }
-    else if(json.data && typeof json.data==='object') payload=json.data;
-    if(payload && typeof payload.value==='string'){ try{payload=JSON.parse(payload.value);}catch{} }
-    console.log(`[Stats] parsed payload ${payload ? Object.keys(payload).join(',') : 'null'}`);
-    if(payload) return payload;
+    for(const scope of scopes){
+      const scopeParam = scope ? `&scope=${encodeURIComponent(scope)}` : '';
+      const url=`https://apis.roblox.com/datastore/v1/universes/${universeId}/standard-datastores/datastore/entries/entry?datastoreName=${encodeURIComponent(datastoreName)}&entryKey=${encodeURIComponent(entryKey)}${scopeParam}`;
+      console.log(`[Stats] fetch ${datastoreName}/${entryKey} scope=${scope||'global(default)'} uni=${universeId}`);
+      const res=await fetch(url,{headers:{'x-api-key':apiKey}});
+      console.log(`[Stats] fetch status ${res.status} for ${entryKey} scope=${scope||'global'}`);
+      if(res.status===404) continue;
+      if(!res.ok){ const txt=await res.text().catch(()=> ''); console.error(`[Stats] DataStore error ${res.status} ${txt.slice(0,500)}`); throw new Error(`DataStore ${res.status}: ${txt.slice(0,300)}`); }
+      const json=await res.json();
+      console.log(`[Stats] raw json keys=${Object.keys(json||{}).join(',')} preview=${JSON.stringify(json).slice(0,500)}`);
+      let payload=json;
+      if(typeof json==='string'){ try{payload=JSON.parse(json);}catch{payload=null;} }
+      else if(json.data && typeof json.data==='string'){ try{payload=JSON.parse(json.data);}catch{payload=json.data;} }
+      else if(json.data && typeof json.data==='object') payload=json.data;
+      if(payload && typeof payload.value==='string'){ try{payload=JSON.parse(payload.value);}catch{} }
+      console.log(`[Stats] parsed payload ${payload ? Object.keys(payload).join(',') : 'null'}`);
+      if(payload) return payload;
+    }
   }
+  // fallback: list first 5 keys to see what exists
+  try {
+    const listUrl=`https://apis.roblox.com/datastore/v1/universes/${universeId}/standard-datastores/datastore/entries?datastoreName=${encodeURIComponent(datastoreName)}&scope=global&limit=5`;
+    const r=await fetch(listUrl,{headers:{'x-api-key':apiKey}});
+    const txt=await r.text().catch(()=> '');
+    console.log(`[Stats] list status ${r.status} preview=${txt.slice(0,800)}`);
+  } catch(e){ console.error('[Stats] list failed', e.message); }
   console.log(`[Stats] none found for ${robloxUserId} in ${datastoreName}`);
   return null;
 }
