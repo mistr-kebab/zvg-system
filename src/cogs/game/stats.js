@@ -84,13 +84,9 @@ async function fetchDataStoreEntry(game, robloxUserId){
   if(!universeId||!datastoreName||!apiKey) throw new Error('Missing ROBLOX env');
   const keysToTry=[`${robloxUserId}`,`Player_${robloxUserId}`];
   for(const entryKey of keysToTry){
-    // v2 Cloud API (recommended) - uses path params, new scopes universe-datastores.objects:read
     const url=`https://apis.roblox.com/cloud/v2/universes/${universeId}/data-stores/${encodeURIComponent(datastoreName)}/entries/${encodeURIComponent(entryKey)}`;
-    console.log(`[Stats] fetch v2 ${datastoreName}/${entryKey} uni=${universeId}`);
     const res=await fetch(url,{headers:{'x-api-key':apiKey}});
-    console.log(`[Stats] fetch status ${res.status} for ${entryKey}`);
     if(res.status===404) {
-      // try legacy v1 as fallback for older keys
       const legacyUrl=`https://apis.roblox.com/datastore/v1/universes/${universeId}/standard-datastores/datastore/entries/entry?datastoreName=${encodeURIComponent(datastoreName)}&entryKey=${encodeURIComponent(entryKey)}`;
       const legacyRes=await fetch(legacyUrl,{headers:{'x-api-key':apiKey}}).catch(()=>null);
       if(legacyRes && legacyRes.ok){
@@ -101,32 +97,20 @@ async function fetchDataStoreEntry(game, robloxUserId){
           else if(json.data) { p=json.data; }
           if(typeof p==='string'){ try{ p=JSON.parse(p); }catch{} }
           if(p && typeof p.value==='string'){ try{ p=JSON.parse(p.value); }catch{} }
-          if(p) { console.log(`[Stats] legacy parsed ${typeof p==='object' ? Object.keys(p).join(',') : typeof p}`); return p; }
+          if(p) return p;
         }
       }
       continue;
     }
-    if(!res.ok){ const txt=await res.text().catch(()=> ''); console.error(`[Stats] DataStore error ${res.status} ${txt.slice(0,500)}`); throw new Error(`DataStore ${res.status}: ${txt.slice(0,300)}`); }
+    if(!res.ok){ const txt=await res.text().catch(()=> ''); throw new Error(`DataStore ${res.status}: ${txt.slice(0,300)}`); }
     const json=await res.json();
-    console.log(`[Stats] raw json keys=${Object.keys(json||{}).join(',')} preview=${JSON.stringify(json).slice(0,600)}`);
-    // v2 returns { path, value, id, attributes } where value is JSON string or object
     let payload=json.value ?? json.data ?? json;
     if(typeof payload==='string'){ try{payload=JSON.parse(payload);}catch{} }
     if(payload && typeof payload.value==='string'){ try{payload=JSON.parse(payload.value);}catch{} }
-    // v2 value may be base64? if so, try decode
     if(payload && typeof payload==='string' && payload.length>20) { try { const decoded=Buffer.from(payload,'base64').toString('utf8'); const parsed=JSON.parse(decoded); if(parsed && typeof parsed==='object') payload=parsed; } catch {} }
-    console.log(`[Stats] parsed payload ${payload && typeof payload==='object' ? Object.keys(payload).join(',') : typeof payload}`);
     if(payload && typeof payload==='object') return payload;
     if(payload) return payload;
   }
-  // fallback: list first 5 keys via v2
-  try {
-    const listUrl=`https://apis.roblox.com/cloud/v2/universes/${universeId}/data-stores/${encodeURIComponent(datastoreName)}/entries?maxPageSize=5`;
-    const r=await fetch(listUrl,{headers:{'x-api-key':apiKey}});
-    const txt=await r.text().catch(()=> '');
-    console.log(`[Stats] list v2 status ${r.status} preview=${txt.slice(0,800)}`);
-  } catch(e){ console.error('[Stats] list failed', e.message); }
-  console.log(`[Stats] none found for ${robloxUserId} in ${datastoreName}`);
   return null;
 }
 async function fetchAvatarHeadshot(robloxUserId){
@@ -217,8 +201,7 @@ module.exports = {
 
     client.on(Events.InteractionCreate, async (interaction)=>{
       try{
-        // debug
-        if(interaction.customId?.startsWith('zvg:stats:')) console.log(`[Stats] ${interaction.customId} by ${interaction.user.id} type=${interaction.type}`);
+        if(interaction.customId?.startsWith('zvg:stats:') && interaction.customId!=='zvg:stats:game' && interaction.customId!=='zvg:stats:user') console.log(`[Stats] ${interaction.customId} by ${interaction.user.id}`);
         if(interaction.isChatInputCommand() && interaction.commandName==='stats'){
           await interaction.reply(buildGameSelectPayload());
           return;
@@ -247,8 +230,7 @@ module.exports = {
           const game = GAMES[gameKey];
           if(!game){ await interaction.reply({ content:'Select a game first.', flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
           const selectedUserId = interaction.values[0];
-          console.log(`[Stats] user-select ${selectedUserId} for game ${gameKey} by ${interaction.user.id}`);
-          try { await interaction.deferUpdate(); } catch (e) { console.error('[Stats] deferUpdate failed', e); }
+          try { await interaction.deferUpdate(); } catch {}
           // resolve via linked
           let resolved;
           try{
@@ -316,8 +298,11 @@ module.exports = {
               new TextDisplayBuilder().setContent(`## [${resolved.username}](${profile})`),
               new TextDisplayBuilder().setContent(
                 [
-                  `**Coins:** \`${coins}\`  **Deaths:** \`${deaths}\`  **Wins:** \`${wins}\``,
-                  `**Playtime:** \`${formatPlaytime(playtime)}\`  **Rank:** \`${rank}\``,
+                  `**Coins:** \`${coins}\``,
+                  `**Deaths:** \`${deaths}\``,
+                  `**Wins:** \`${wins}\``,
+                  `**Playtime:** \`${formatPlaytime(playtime)}\``,
+                  `**Rank:** \`${rank}\``,
                 ].join('\n'),
               ),
             )
@@ -354,8 +339,11 @@ module.exports = {
               new TextDisplayBuilder().setContent(`## [${resolved.username}](${profile})`),
               new TextDisplayBuilder().setContent(
                 [
-                  `**Coins:** \`${coins}\`  **Deaths:** \`${deaths}\`  **Wins:** \`${wins}\``,
-                  `**Playtime:** \`${formatPlaytime(playtime)}\`  **Rank:** \`${rank}\``,
+                  `**Coins:** \`${coins}\``,
+                  `**Deaths:** \`${deaths}\``,
+                  `**Wins:** \`${wins}\``,
+                  `**Playtime:** \`${formatPlaytime(playtime)}\``,
+                  `**Rank:** \`${rank}\``,
                 ].join('\n'),
               ),
             )
