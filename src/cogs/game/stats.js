@@ -12,6 +12,8 @@ const {
   ContainerBuilder,
   TextDisplayBuilder,
   SeparatorBuilder,
+  SectionBuilder,
+  ThumbnailBuilder,
   ActionRowBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
