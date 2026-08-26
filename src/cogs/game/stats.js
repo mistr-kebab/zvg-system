@@ -83,17 +83,22 @@ async function fetchDataStoreEntry(game, robloxUserId){
   const keysToTry=[`${robloxUserId}`,`Player_${robloxUserId}`];
   for(const entryKey of keysToTry){
     const url=`https://apis.roblox.com/datastore/v1/universes/${universeId}/standard-datastores/datastore/entries/entry?datastoreName=${encodeURIComponent(datastoreName)}&entryKey=${encodeURIComponent(entryKey)}`;
+    console.log(`[Stats] fetch ${datastoreName}/${entryKey} uni=${universeId}`);
     const res=await fetch(url,{headers:{'x-api-key':apiKey}});
+    console.log(`[Stats] fetch status ${res.status} for ${entryKey}`);
     if(res.status===404) continue;
-    if(!res.ok){ const txt=await res.text().catch(()=> ''); throw new Error(`DataStore ${res.status}: ${txt.slice(0,300)}`); }
+    if(!res.ok){ const txt=await res.text().catch(()=> ''); console.error(`[Stats] DataStore error ${res.status} ${txt.slice(0,500)}`); throw new Error(`DataStore ${res.status}: ${txt.slice(0,300)}`); }
     const json=await res.json();
+    console.log(`[Stats] raw json keys=${Object.keys(json||{}).join(',')} preview=${JSON.stringify(json).slice(0,500)}`);
     let payload=json;
     if(typeof json==='string'){ try{payload=JSON.parse(json);}catch{payload=null;} }
     else if(json.data && typeof json.data==='string'){ try{payload=JSON.parse(json.data);}catch{payload=json.data;} }
     else if(json.data && typeof json.data==='object') payload=json.data;
     if(payload && typeof payload.value==='string'){ try{payload=JSON.parse(payload.value);}catch{} }
+    console.log(`[Stats] parsed payload ${payload ? Object.keys(payload).join(',') : 'null'}`);
     if(payload) return payload;
   }
+  console.log(`[Stats] none found for ${robloxUserId} in ${datastoreName}`);
   return null;
 }
 async function fetchAvatarHeadshot(robloxUserId){
@@ -259,7 +264,14 @@ module.exports = {
       }
       if(!stats){
         console.log(`[Stats] no stats for ${resolved.username}`);
-        await interaction.editReply({ content:`No stats found for **${resolved.username}** — this player hasn't played **${game.displayName}** yet.`, components: [], embeds: [] }).catch(async()=> await interaction.followUp({ content:`No stats found for **${resolved.username}**.`, flags: MessageFlags.Ephemeral }).catch(()=>null)); return;
+        const noStatsContainer = new ContainerBuilder().setAccentColor(0xfee75c)
+          .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent('## No stats found'),
+            new TextDisplayBuilder().setContent(`No stats found for **${resolved.username}** — this player hasn't played **${game.displayName}** yet.`),
+          )
+          .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+          .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# ${game.displayName} • ${resolved.username}`));
+        await interaction.editReply({ flags: MessageFlags.IsComponentsV2, components: [noStatsContainer], embeds: [], content: undefined }).catch(async()=> await interaction.followUp({ flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral, components: [noStatsContainer] }).catch(()=>null)); return;
       }
       const coins=stats.Coins??stats.coins??0, deaths=stats.Deaths??stats.deaths??0, wins=stats.Wins??stats.wins??0, playtime=stats.PlayTime??stats.Playtime??stats.playtime??0;
       const embed=new EmbedBuilder().setTitle(resolved.username).setURL(`https://www.roblox.com/users/${resolved.userId}/profile`).setThumbnail(thumb||null)
@@ -275,7 +287,16 @@ module.exports = {
         const [s,t,r]=await Promise.all([fetchDataStoreEntry(game,resolved.userId), fetchAvatarHeadshot(resolved.userId), getRankCached(game,resolved.userId)]);
         stats=s; thumb=t; rank=r;
       }catch(e){ console.error(e); await interaction.editReply({ content:'Something went wrong, please try again later.' }).catch(()=>null); return; }
-      if(!stats){ await interaction.editReply({ content:`No stats found for **${resolved.username}** — this player hasn't played **${game.displayName}** yet.` }).catch(()=>null); return; }
+      if(!stats){
+        const noStatsContainer = new ContainerBuilder().setAccentColor(0xfee75c)
+          .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent('## No stats found'),
+            new TextDisplayBuilder().setContent(`No stats found for **${resolved.username}** — this player hasn't played **${game.displayName}** yet.`),
+          )
+          .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+          .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# ${game.displayName} • ${resolved.username}`));
+        await interaction.editReply({ flags: MessageFlags.IsComponentsV2, components: [noStatsContainer], embeds: [], content: undefined }).catch(()=>null); return;
+      }
       const coins=stats.Coins??stats.coins??0, deaths=stats.Deaths??stats.deaths??0, wins=stats.Wins??stats.wins??0, playtime=stats.PlayTime??stats.Playtime??stats.playtime??0;
       const embed=new EmbedBuilder().setTitle(resolved.username).setURL(`https://www.roblox.com/users/${resolved.userId}/profile`).setThumbnail(thumb||null)
         .addFields({name:'Coins',value:String(coins),inline:true},{name:'Deaths',value:String(deaths),inline:true},{name:'Wins',value:String(wins),inline:true},{name:'Playtime',value:formatPlaytime(playtime),inline:true},{name:'Rank',value:rank,inline:true})
