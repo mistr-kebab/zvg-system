@@ -138,12 +138,10 @@ function buildGameSelectPayload(selectedKey=null){
     return opt;
   });
   const select = new StringSelectMenuBuilder().setCustomId('zvg:stats:game').setPlaceholder('Select a game').addOptions(options).setMinValues(1).setMaxValues(1);
-  const hasSelection = !!selectedKey;
   const cont = new ContainerBuilder().setAccentColor(0x00a2ff)
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent('## Game Stats'), new TextDisplayBuilder().setContent('Select a game, click **Continue**, then choose a member/player.'))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent('## Game Stats'), new TextDisplayBuilder().setContent('Select a game to see stats, then choose a member/player.'))
     .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
-    .addActionRowComponents(new ActionRowBuilder().addComponents(select))
-    .addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('zvg:stats:continue').setLabel('Continue').setStyle(ButtonStyle.Primary).setDisabled(!hasSelection)));
+    .addActionRowComponents(new ActionRowBuilder().addComponents(select));
   return { flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral, components:[cont] };
 }
 function buildMemberSelectPayload(gameKey){
@@ -189,16 +187,7 @@ module.exports = {
         if(interaction.isStringSelectMenu() && interaction.customId==='zvg:stats:game'){
           const chosen = interaction.values[0];
           setPendingGame(interaction.user.id, chosen);
-          await interaction.update(buildGameSelectPayload(chosen));
-          return;
-        }
-        if(interaction.isButton() && interaction.customId==='zvg:stats:continue'){
-          const gameKey = getPendingGame(interaction.user.id);
-          if(!gameKey){
-            await interaction.reply({ content:'Please select a game first.', flags: MessageFlags.Ephemeral }).catch(()=>null);
-            return;
-          }
-          await interaction.update(buildMemberSelectPayload(gameKey));
+          await interaction.update(buildMemberSelectPayload(chosen));
           return;
         }
         if(interaction.isButton() && interaction.customId==='zvg:stats:back'){
