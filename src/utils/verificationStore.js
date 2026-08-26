@@ -25,8 +25,10 @@ function getLink(discordId) {
 
 function findLinkByRobloxId(robloxUserId, excludeDiscordId = null) {
   const links = loadData().links ?? {};
+  const target = String(robloxUserId);
+  const exclude = excludeDiscordId != null ? String(excludeDiscordId) : null;
   const entry = Object.entries(links).find(
-    ([discordId, link]) => link.robloxUserId === robloxUserId && discordId !== excludeDiscordId,
+    ([discordId, link]) => String(link.robloxUserId) === target && String(discordId) !== exclude,
   );
   return entry ? { discordId: entry[0], ...entry[1] } : null;
 }

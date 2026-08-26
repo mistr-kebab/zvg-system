@@ -389,7 +389,10 @@ async function refreshPanel(client) {
     if (!channel || channel.type !== ChannelType.GuildText) return;
     const message = await channel.messages.fetch(panelId).catch(() => null);
     if (!message) return;
-    await message.edit(buildPanelPayload());
+    const payload = buildPanelPayload();
+    // don't re-upload attachment on edit – existing attachment persists
+    delete payload.files;
+    await message.edit(payload);
   } catch (error) {
     console.error('[RobloxLinking] Failed to refresh panel:', error);
   }
@@ -409,7 +412,9 @@ async function ensurePanel(client) {
         .catch(() => null);
       if (existing) {
         try {
-          await existing.edit(buildPanelPayload());
+          const payload = buildPanelPayload();
+          delete payload.files;
+          await existing.edit(payload);
           console.log('[RobloxLinking] Panel refreshed.');
         } catch (error) {
           console.error('[RobloxLinking] Failed to refresh existing panel:', error);

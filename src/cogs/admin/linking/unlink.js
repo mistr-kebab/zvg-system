@@ -44,15 +44,13 @@ async function refreshPanel(client) {
     const { loadData: ld } = require('../../../utils/verificationStore');
     const linkedCount = Object.keys(ld().links ?? {}).length;
     const { ContainerBuilder: CB, TextDisplayBuilder: TB, MediaGalleryBuilder, MediaGalleryItemBuilder, SeparatorBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags: MF } = require('discord.js');
-    const path = require('node:path');
-    const PANEL_IMAGE_PATH = path.join(process.cwd(), 'assets', 'roblox-linking.png');
     const container = new CB().setAccentColor(0x00a2ff)
       .addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://roblox-linking.png')))
       .addTextDisplayComponents(new TB().setContent('## Roblox Verification'), new TB().setContent(['Link your Roblox account to this Discord server.', '', '**How it works:**', '- Press **Link with Roblox** below', '- Enter your exact Roblox username', '- Put the generated code in your Roblox profile **About** section', '- Click **Check now**', '', '-# Your Discord nickname will be set to your Roblox username.'].join('\n')))
       .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
       .addTextDisplayComponents(new TB().setContent(`-# 🔗 **${linkedCount}** account${linkedCount === 1 ? '' : 's'} linked`))
       .addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('zvg:verify:start').setLabel('Link with Roblox').setEmoji('🔗').setStyle(ButtonStyle.Primary)));
-    await msg.edit({ flags: MF.IsComponentsV2, components: [container], files: [PANEL_IMAGE_PATH] }).catch(() => null);
+    await msg.edit({ flags: MF.IsComponentsV2, components: [container] }).catch(() => null);
   } catch {}
 }
 

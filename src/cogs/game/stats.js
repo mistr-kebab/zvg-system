@@ -37,7 +37,22 @@ const GAMES = {
 
 const leaderboardCache = new Map();
 const LEADERBOARD_TTL_MS = 5 * 60 * 1000;
-const pendingGame = new Map(); // discordId -> gameKey
+const pendingGame = new Map(); // discordId -> { gameKey, expiresAt }
+const PENDING_TTL_MS = 15 * 60 * 1000;
+function setPendingGame(userId, gameKey) {
+  pendingGame.set(String(userId), { gameKey, expiresAt: Date.now() + PENDING_TTL_MS });
+}
+function getPendingGame(userId) {
+  const entry = pendingGame.get(String(userId));
+  if (!entry) return null;
+  if (entry.expiresAt < Date.now()) { pendingGame.delete(String(userId)); return null; }
+  return entry.gameKey;
+}
+// periodic cleanup
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of pendingGame) if (v.expiresAt < now) pendingGame.delete(k);
+}, 60 * 1000).unref?.();
 
 function formatPlaytime(s){ const v=Number(s)||0; const h=Math.floor(v/3600), m=Math.floor((v%3600)/60); if(h>0) return `${h}h ${m}m`; if(m>0) return `${m}m`; return `${v}s`; }
 
@@ -46,12 +61,12 @@ async function resolveRobloxUser(input){
   const mentionMatch = input.match(/^<@!?(\d+)>$/);
   if(mentionMatch){
     const link=getLink(mentionMatch[1]);
-    if(!link) throw {userMsg:'This user has not linked their Roblox account yet. Use `/link`.'};
+    if(!link) throw {userMsg:'This user has not linked their Roblox account yet. Use `/verify` to link.'};
     try{ const r=await fetch(`https://users.roblox.com/v1/users/${link.robloxUserId}`); const j=await r.json(); return {userId:String(link.robloxUserId), username:j.name||link.robloxUsername}; }catch{ return {userId:String(link.robloxUserId), username:link.robloxUsername}; }
   }
   if(/^\d{17,19}$/.test(input.trim())){
     const link=getLink(input.trim());
-    if(!link) throw {userMsg:'This user has not linked their Roblox account yet. Use `/link`.'};
+    if(!link) throw {userMsg:'This user has not linked their Roblox account yet. Use `/verify` to link.'};
     return {userId:String(link.robloxUserId), username:link.robloxUsername};
   }
   const username=input.trim();
@@ -173,12 +188,12 @@ module.exports = {
         }
         if(interaction.isStringSelectMenu() && interaction.customId==='zvg:stats:game'){
           const chosen = interaction.values[0];
-          pendingGame.set(interaction.user.id, chosen);
+          setPendingGame(interaction.user.id, chosen);
           await interaction.update(buildGameSelectPayload(chosen));
           return;
         }
         if(interaction.isButton() && interaction.customId==='zvg:stats:continue'){
-          const gameKey = pendingGame.get(interaction.user.id);
+          const gameKey = getPendingGame(interaction.user.id);
           if(!gameKey){
             await interaction.reply({ content:'Please select a game first.', flags: MessageFlags.Ephemeral }).catch(()=>null);
             return;
@@ -187,20 +202,20 @@ module.exports = {
           return;
         }
         if(interaction.isButton() && interaction.customId==='zvg:stats:back'){
-          const sel = pendingGame.get(interaction.user.id) || null;
+          const sel = getPendingGame(interaction.user.id) || null;
           await interaction.update(buildGameSelectPayload(sel));
           return;
         }
         if(interaction.isButton() && interaction.customId==='zvg:stats:roblox_btn'){
-          const gameKey = pendingGame.get(interaction.user.id);
+          const gameKey = getPendingGame(interaction.user.id);
           if(!gameKey){ await interaction.reply({ content:'Select a game first.', flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
           const modal = new ModalBuilder().setCustomId(`zvg:stats:modal:${gameKey}`).setTitle('Roblox username')
             .addLabelComponents(new LabelBuilder().setLabel('Roblox Username').setTextInputComponent(new TextInputBuilder().setCustomId('robloxUsername').setStyle(TextInputStyle.Short).setRequired(true).setMinLength(3).setMaxLength(20)));
           await interaction.showModal(modal);
           return;
         }
-        if((interaction.isUserSelectMenu && interaction.isUserSelectMenu() && interaction.customId==='zvg:stats:user') || (interaction.isAnySelectMenu && interaction.isAnySelectMenu() && interaction.customId==='zvg:stats:user')){
-          const gameKey = pendingGame.get(interaction.user.id);
+        if(interaction.isUserSelectMenu?.() && interaction.customId==='zvg:stats:user'){
+          const gameKey = getPendingGame(interaction.user.id);
           const game = GAMES[gameKey];
           if(!game){ await interaction.reply({ content:'Select a game first.', flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
           const selectedUserId = interaction.values[0];
@@ -209,7 +224,7 @@ module.exports = {
           let resolved;
           try{
             const link = getLink(selectedUserId);
-            if(!link) throw {userMsg:'This user has not linked their Roblox account yet. Use `/link`.'};
+            if(!link) throw {userMsg:'This user has not linked their Roblox account yet. Use `/verify` to link.'};
             try{ const r=await fetch(`https://users.roblox.com/v1/users/${link.robloxUserId}`); const j=await r.json(); resolved={userId:String(link.robloxUserId), username:j.name||link.robloxUsername}; }catch{ resolved={userId:String(link.robloxUserId), username:link.robloxUsername}; }
           }catch(e){
             if(e.userMsg){ await interaction.editReply({ content:e.userMsg, components: [], embeds: [], flags: MessageFlags.Ephemeral }).catch(()=>null); return; }
@@ -254,7 +269,7 @@ module.exports = {
         .addFields({name:'Coins',value:String(coins),inline:true},{name:'Deaths',value:String(deaths),inline:true},{name:'Wins',value:String(wins),inline:true},{name:'Playtime',value:formatPlaytime(playtime),inline:true},{name:'Rank',value:rank,inline:true})
         .setFooter({text:game.displayName}).setColor(0x00a2ff).setTimestamp();
       await interaction.editReply({ content: '', components: [], embeds: [embed], flags: MessageFlags.Ephemeral }).catch(()=>null);
-      pendingGame.delete(interaction.user.id);
+      pendingGame.delete(String(interaction.user.id));
     }
     async function sendStatsModal(interaction, game, resolved){
       let stats=null, thumb=null, rank='Unranked';
@@ -268,6 +283,7 @@ module.exports = {
         .addFields({name:'Coins',value:String(coins),inline:true},{name:'Deaths',value:String(deaths),inline:true},{name:'Wins',value:String(wins),inline:true},{name:'Playtime',value:formatPlaytime(playtime),inline:true},{name:'Rank',value:rank,inline:true})
         .setFooter({text:game.displayName}).setColor(0x00a2ff).setTimestamp();
       await interaction.editReply({ embeds:[embed] }).catch(()=>null);
+      pendingGame.delete(String(interaction.user.id));
     }
   }
 };

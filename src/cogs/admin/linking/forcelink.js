@@ -75,7 +75,6 @@ module.exports = {
           const msg = channel ? await channel.messages.fetch(panelId).catch(() => null) : null;
           if (msg) {
             const { ContainerBuilder: CB, TextDisplayBuilder: TB, MediaGalleryBuilder, MediaGalleryItemBuilder, SeparatorBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags: MF } = require('discord.js');
-            const path = require('node:path');
             const linkedCount = Object.keys(ld().links ?? {}).length;
             const container = new CB().setAccentColor(0x00a2ff)
               .addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://roblox-linking.png')))
@@ -83,7 +82,7 @@ module.exports = {
               .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
               .addTextDisplayComponents(new TB().setContent(`-# 🔗 **${linkedCount}** account${linkedCount === 1 ? '' : 's'} linked`))
               .addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('zvg:verify:start').setLabel('Link with Roblox').setEmoji('🔗').setStyle(ButtonStyle.Primary)));
-            await msg.edit({ flags: MF.IsComponentsV2, components: [container], files: [path.join(process.cwd(), 'assets', 'roblox-linking.png')] }).catch(() => null);
+            await msg.edit({ flags: MF.IsComponentsV2, components: [container] }).catch(() => null);
           }
         }
       } catch {}

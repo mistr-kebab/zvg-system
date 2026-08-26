@@ -1,6 +1,7 @@
 const {
   ChannelType,
   ContainerBuilder,
+  Events,
   MessageFlags,
   PermissionFlagsBits,
   SectionBuilder,
@@ -9,6 +10,8 @@ const {
   TextDisplayBuilder,
   ThumbnailBuilder,
 } = require('discord.js');
+
+const DEFAULT_CHANNEL_ID = '1540997517653839902';
 
 const ACCENT_COLOR = 0x5865f2;
 
@@ -38,8 +41,8 @@ function buildWelcomeContainer(member) {
 module.exports = {
   name: 'welcome',
   init(client) {
-    client.on('guildMemberAdd', async (member) => {
-      const channelId = process.env.WELCOME_CHANNEL_ID;
+    client.on(Events.GuildMemberAdd, async (member) => {
+      const channelId = process.env.WELCOME_CHANNEL_ID || DEFAULT_CHANNEL_ID;
       if (!channelId || member.user.bot) return;
 
       try {

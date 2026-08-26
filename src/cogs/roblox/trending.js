@@ -3,7 +3,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 
-const CHANNEL_ID = '1541540867846840451';
+const DEFAULT_CHANNEL_ID = '1541540867846840451';
+const CHANNEL_ID = process.env.TRENDING_CHANNEL_ID || DEFAULT_CHANNEL_ID;
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DATA_FILE = path.join(DATA_DIR, 'trending.json');
 
@@ -164,7 +165,7 @@ async function syncTrending(client, forceNew = false) {
       // cache successful fetch
       dataCache.cachedGames = games;
       dataCache.cachedAt = new Date().toISOString();
-      saveTrendingData({ ...dataCache, cachedGames: games, cachedAt: dataCache.cachedAt });
+      saveTrendingData(dataCache);
     } else if (dataCache.cachedGames?.length) {
       console.warn('[Trending] Using cached games (fetch failed)');
       games = dataCache.cachedGames;
