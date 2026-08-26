@@ -98,6 +98,9 @@ function formatPlayers(n) {
 }
 
 async function buildTrendingPayload(games) {
+  // Discord Component limit: max 40 total components (nested counted). With Section (Section+Text+Thumbnail=3) + Separator we hit 44 at 10 games.
+  // Limit to 5 to stay safely under limit and match static fallback.
+  games = games.slice(0, 5);
   const thumbs = await fetchThumbnails(games.map(g => g.universeId));
   const container = new ContainerBuilder().setAccentColor(0x00a2ff)
     .addTextDisplayComponents(
